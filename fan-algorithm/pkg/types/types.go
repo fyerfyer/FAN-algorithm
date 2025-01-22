@@ -1,171 +1,257 @@
-// types.go
 package types
 
 import (
-    "github.com/fyerfyer/FAN-algorithm/fan-algorithm/internal/circuit"
+	"github.com/fyerfyer/FAN-algorithm/fan-algorithm/internal/circuit"
+	"time"
 )
 
-// TestResult represents the result of a test generation attempt
-type TestResult struct {
-    Success      bool                                    // Whether test generation was successful
-    TestPattern  map[*circuit.Signal]circuit.SignalValue // Input assignments that detect the fault
-    Implications []Assignment                            // List of implications made during test generation
-    DFrontier    []DFrontierGate                        // Final D-frontier gates
-    Decisions    []Decision                             // List of decisions made during test generation
-}
-
-// Assignment represents a value assignment to a signal
-type Assignment struct {
-    Signal *circuit.Signal      // The signal being assigned
-    Value  circuit.SignalValue  // The value being assigned
-    Reason AssignmentReason     // Reason for the assignment
-}
-
-// AssignmentReason represents why a value was assigned
 type AssignmentReason int
 
 const (
-    DECISION AssignmentReason = iota    // Direct decision by algorithm
-    IMPLICATION                         // Result of implication
-    FAULT_INJECTION                     // Fault injection
-    BACKTRACE                          // Result of backtrace
+	DECISION AssignmentReason = iota
+	IMPLICATION
+	UNIQUE_SENSITIZATION
+	MANDATORY_PATH
 )
 
-// DFrontierGate represents a gate in the D-frontier
-type DFrontierGate struct {
-    Gate       *circuit.Gate    // The gate in the D-frontier
-    FaultyInput *circuit.Signal // Input signal carrying D or D'
-}
-
-// Decision represents a decision made during test generation
-type Decision struct {
-    Signal      *circuit.Signal      // Signal where decision was made
-    Value       circuit.SignalValue  // Value assigned
-    Alternative bool                 // Whether alternative value has been tried
-    Level       int                  // Decision level in the tree
-}
-
-// BacktraceObjective represents an objective for backtrace
-type BacktraceObjective struct {
-    Signal    *circuit.Signal      // Target signal
-    Value     circuit.SignalValue  // Desired value
-    ZeroCount int                 // Number of times 0 is required
-    OneCount  int                 // Number of times 1 is required
-    Priority  int                 // Priority of this objective
-}
-
-// SensitizationPath represents a path that needs to be sensitized
 type SensitizationPath struct {
-    Gates     []*circuit.Gate    // Gates in the path
-    Sensitized bool              // Whether path is currently sensitized
+	Gates   []*circuit.Gate
+	Signals []*circuit.Signal
+	Score   int
 }
 
-// CircuitState represents a snapshot of circuit state
-type CircuitState struct {
-    SignalValues map[*circuit.Signal]circuit.SignalValue
-    DFrontier    []DFrontierGate
-}
-
-// TestGenerationConfig holds configuration for test generation
-type TestGenerationConfig struct {
-    MaxDecisions        int     // Maximum number of decisions allowed
-    MaxBacktracks       int     // Maximum number of backtracks allowed
-    UseUniqueSensitization bool // Whether to use unique sensitization
-    UseDynamicBacktrace bool   // Whether to use dynamic backtrace ordering
-}
-
-// ObjectiveType represents types of objectives in test generation
 type ObjectiveType int
 
 const (
-    PROPAGATE ObjectiveType = iota  // Propagate fault effect
-    JUSTIFY                         // Justify a signal value
-    SENSITIZE                       // Sensitize a path
+	PROPAGATE ObjectiveType = iota
+	JUSTIFY
 )
 
-// Objective represents a test generation objective
-type Objective struct {
-    Type      ObjectiveType
-    Signal    *circuit.Signal
-    Value     circuit.SignalValue
-    Priority  int
+func NewCircuitState() *CircuitState {
+	return &CircuitState{
+		SignalValues:        make(map[*circuit.Signal]circuit.SignalValue),
+		DFrontier:           make([]DFrontierGate, 0),
+		JustificationStatus: make(map[*circuit.Signal]bool),
+		SensitizedPaths:     make([]*SensitizationPath, 0),
+	}
 }
 
-// BacktraceResult represents the result of a backtrace operation
-type BacktraceResult struct {
-    Success          bool
-    FinalObjectives  []*BacktraceObjective
-    HeadLines        []*circuit.Signal
+func NewTestGenerationStats() *TestGenerationStats {
+	return &TestGenerationStats{
+		ExecutionTime: 0,
+		SuccessRate:   0.0,
+	}
 }
 
-// ImplicationResult represents the result of an implication operation
-type ImplicationResult struct {
-    Success      bool
-    Implications []Assignment
-    Consistent   bool
+// TestResult represents the result of a test generation attempt
+type TestResult struct {
+	Success      bool
+	TestPattern  map[*circuit.Signal]circuit.SignalValue
+	Implications []Assignment
+	DFrontier    []DFrontierGate
+	Decisions    []Decision
+	Stats        *TestGenerationStats
+	Error        TestGenerationError
+	CircuitState *CircuitState
 }
 
-// TestGenerationStats holds statistics about test generation
-type TestGenerationStats struct {
-    Decisions       int     // Number of decisions made
-    Backtracks      int     // Number of backtracks performed
-    Implications    int     // Number of implications performed
-    BacktraceCount  int     // Number of backtrace operations
-    ExecutionTime   float64 // Execution time in seconds
+// Assignment with enhanced reason tracking
+type Assignment struct {
+	Signal    *circuit.Signal
+	Value     circuit.SignalValue
+	Reason    AssignmentReason
+	Level     int       // Decision level where this assignment was made
+	TimeStamp time.Time // When the assignment was made
 }
 
-// Error types for test generation
-type TestGenerationError string
+// DFrontierGate with additional analysis info
+type DFrontierGate struct {
+	Gate           *circuit.Gate
+	FaultyInput    *circuit.Signal
+	Priority       int               // Priority for processing this gate
+	BlockingInputs []*circuit.Signal // Inputs blocking fault propagation
+}
+
+// Decision with enhanced backtracking support
+type Decision struct {
+	Signal      *circuit.Signal
+	Value       circuit.SignalValue
+	Alternative bool
+	Level       int
+	Children    []Assignment // Implications resulting from this decision
+	Score       int          // Decision quality score
+	TimeStamp   time.Time
+}
+
+// BacktraceObjective with improved priority handling
+type BacktraceObjective struct {
+	Signal       *circuit.Signal
+	Value        circuit.SignalValue
+	ZeroCount    int
+	OneCount     int
+	Priority     int
+	Cost         int                   // Cost of achieving this objective
+	Dependencies []*BacktraceObjective // Other objectives this depends on
+}
+
+// CircuitState with enhanced state tracking
+type CircuitState struct {
+	SignalValues        map[*circuit.Signal]circuit.SignalValue
+	DFrontier           []DFrontierGate
+	DecisionLevel       int
+	JustificationStatus map[*circuit.Signal]bool // Tracks justified signals
+	SensitizedPaths     []*SensitizationPath
+}
+
+// Add new method to check state consistency
+func (cs *CircuitState) IsConsistent() bool {
+	for signal, value := range cs.SignalValues {
+		if !signal.IsCompatible(value) {
+			return false
+		}
+	}
+	return true
+}
+
+// Add method to clone circuit state
+func (cs *CircuitState) Clone() *CircuitState {
+	newState := NewCircuitState()
+	for signal, value := range cs.SignalValues {
+		newState.SignalValues[signal] = value
+	}
+	newState.DecisionLevel = cs.DecisionLevel
+	return newState
+}
+
+// TestGenerationConfig with additional options
+type TestGenerationConfig struct {
+	MaxDecisions           int
+	MaxBacktracks          int
+	UseUniqueSensitization bool
+	UseDynamicBacktrace    bool
+	TimeLimit              time.Duration
+	PreferredHeadLines     []*circuit.Signal
+	BacktraceStrategy      BacktraceStrategy
+	PropagationStrategy    PropagationStrategy
+}
+
+// Add strategy enums
+type BacktraceStrategy int
+type PropagationStrategy int
 
 const (
-    ERROR_MAX_DECISIONS  TestGenerationError = "Maximum decisions exceeded"
-    ERROR_MAX_BACKTRACKS TestGenerationError = "Maximum backtracks exceeded"
-    ERROR_INCONSISTENCY  TestGenerationError = "Value inconsistency detected"
-    ERROR_NO_SOLUTION    TestGenerationError = "No solution exists"
+	STATIC_BACKTRACE BacktraceStrategy = iota
+	DYNAMIC_BACKTRACE
+	HYBRID_BACKTRACE
 )
 
-func (e TestGenerationError) Error() string {
-    return string(e)
+const (
+	FORWARD_PROPAGATION PropagationStrategy = iota
+	BACKWARD_PROPAGATION
+	BIDIRECTIONAL_PROPAGATION
+)
+
+// Enhanced stats tracking
+type TestGenerationStats struct {
+	Decisions                    int
+	Backtracks                   int
+	Implications                 int
+	BacktraceCount               int
+	ExecutionTime                time.Duration
+	MaxDecisionLevel             int
+	SuccessRate                  float64
+	AverageBacktracksPerDecision float64
 }
 
-// Helper functions
+// Add method to update stats
+func (s *TestGenerationStats) Update(decision bool, backtrack bool) {
+	if decision {
+		s.Decisions++
+	}
+	if backtrack {
+		s.Backtracks++
+	}
+	s.AverageBacktracksPerDecision = float64(s.Backtracks) / float64(s.Decisions)
+}
 
-// NewTestResult creates a new TestResult with default values
+// Enhanced error types
+type TestGenerationError interface {
+	Error() string
+	Code() int
+}
+
+type testError struct {
+	message string
+	code    int
+}
+
+func (e *testError) Error() string { return e.message }
+func (e *testError) Code() int     { return e.code }
+
+// Predefined errors
+var (
+	ErrMaxDecisions  = &testError{"Maximum decisions exceeded", 1}
+	ErrMaxBacktracks = &testError{"Maximum backtracks exceeded", 2}
+	ErrInconsistency = &testError{"Value inconsistency detected", 3}
+	ErrNoSolution    = &testError{"No solution exists", 4}
+	ErrTimeout       = &testError{"Time limit exceeded", 5}
+)
+
+// Enhanced constructor functions
 func NewTestResult() *TestResult {
-    return &TestResult{
-        Success:      false,
-        TestPattern:  make(map[*circuit.Signal]circuit.SignalValue),
-        Implications: make([]Assignment, 0),
-        DFrontier:    make([]DFrontierGate, 0),
-        Decisions:    make([]Decision, 0),
-    }
+	return &TestResult{
+		Success:      false,
+		TestPattern:  make(map[*circuit.Signal]circuit.SignalValue),
+		Implications: make([]Assignment, 0),
+		DFrontier:    make([]DFrontierGate, 0),
+		Decisions:    make([]Decision, 0),
+		Stats:        NewTestGenerationStats(),
+		CircuitState: NewCircuitState(),
+	}
 }
 
-// NewCircuitState creates a new CircuitState
-func NewCircuitState() *CircuitState {
-    return &CircuitState{
-        SignalValues: make(map[*circuit.Signal]circuit.SignalValue),
-        DFrontier:    make([]DFrontierGate, 0),
-    }
-}
-
-// NewTestGenerationConfig creates a new configuration with default values
 func NewTestGenerationConfig() *TestGenerationConfig {
-    return &TestGenerationConfig{
-        MaxDecisions:           1000,
-        MaxBacktracks:          1000,
-        UseUniqueSensitization: true,
-        UseDynamicBacktrace:    true,
-    }
+	return &TestGenerationConfig{
+		MaxDecisions:           1000,
+		MaxBacktracks:          1000,
+		UseUniqueSensitization: true,
+		UseDynamicBacktrace:    true,
+		TimeLimit:              time.Minute * 5,
+		BacktraceStrategy:      DYNAMIC_BACKTRACE,
+		PropagationStrategy:    BIDIRECTIONAL_PROPAGATION,
+	}
 }
 
-// NewTestGenerationStats creates new statistics with zero values
-func NewTestGenerationStats() *TestGenerationStats {
-    return &TestGenerationStats{
-        Decisions:      0,
-        Backtracks:     0,
-        Implications:   0,
-        BacktraceCount: 0,
-        ExecutionTime:  0.0,
-    }
+// Add helper functions for objective management
+func CreateObjective(signal *circuit.Signal, objType ObjectiveType, value circuit.SignalValue) *BacktraceObjective {
+	return &BacktraceObjective{
+		Signal:   signal,
+		Value:    value,
+		Priority: calculateObjectivePriority(signal, value),
+		Cost:     estimateObjectiveCost(signal, value),
+	}
+}
+
+func calculateObjectivePriority(signal *circuit.Signal, value circuit.SignalValue) int {
+	// Priority calculation based on circuit structure and value
+	priority := 0
+	if signal.IsPrimary {
+		priority += 10
+	}
+	if signal.IsHead {
+		priority += 5
+	}
+	if signal.IsFanoutPoint() {
+		priority -= 3
+	}
+	return priority
+}
+
+func estimateObjectiveCost(signal *circuit.Signal, value circuit.SignalValue) int {
+	// Estimate cost based on controllability
+	cost := signal.Controllability
+	if signal.FanIn != nil {
+		cost += len(signal.FanIn.Inputs) * 2
+	}
+	return cost
 }

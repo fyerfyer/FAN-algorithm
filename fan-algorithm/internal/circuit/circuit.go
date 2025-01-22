@@ -200,3 +200,44 @@ func (c *Circuit) ValidateCircuit() error {
 
 	return nil
 }
+
+// FindMandatoryPaths finds paths that must be sensitized for fault propagation
+func (c *Circuit) FindMandatoryPaths(from *Signal) []*Signal {
+	paths := from.GetPathsToOutputs()
+	if len(paths) == 0 {
+		return nil
+	}
+
+	// Find signals that appear in all paths
+	signalCount := make(map[*Signal]int)
+	for _, path := range paths {
+		seen := make(map[*Signal]bool)
+		for _, signal := range path {
+			if !seen[signal] {
+				signalCount[signal]++
+				seen[signal] = true
+			}
+		}
+	}
+
+	mandatory := make([]*Signal, 0)
+	for signal, count := range signalCount {
+		if count == len(paths) {
+			mandatory = append(mandatory, signal)
+		}
+	}
+	return mandatory
+}
+
+// InitializeControllability sets initial controllability values
+func (c *Circuit) InitializeControllability() {
+	for _, gate := range c.Gates {
+		gate.Controllability = gate.CalculateControllability()
+		gate.Output.Controllability = gate.Controllability
+	}
+
+	// Primary inputs are easiest to control
+	for _, input := range c.PrimaryInputs {
+		input.Controllability = 1
+	}
+}
