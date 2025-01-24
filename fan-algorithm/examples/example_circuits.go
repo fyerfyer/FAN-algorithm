@@ -88,47 +88,35 @@ func CreateC17Circuit() *circuit.Circuit {
 func CreateSimpleCircuit() *circuit.Circuit {
 	c := circuit.NewCircuit()
 
-	// Create signals
+	// Create signals with clear IDs
 	in1 := circuit.NewSignal("in1")
 	in2 := circuit.NewSignal("in2")
-	in3 := circuit.NewSignal("in3")
+	n1 := circuit.NewSignal("n1")
+	out1 := circuit.NewSignal("out1")
 
-	mid1 := circuit.NewSignal("mid1")
-	mid2 := circuit.NewSignal("mid2")
-
-	out := circuit.NewSignal("out")
-
-	// Mark primary I/O
+	// Mark I/O
 	in1.MarkAsPrimary()
 	in2.MarkAsPrimary()
-	in3.MarkAsPrimary()
-	out.MarkAsPrimary()
+	out1.MarkAsPrimary()
 
 	// Add to circuit
 	c.AddPrimaryInput(in1)
 	c.AddPrimaryInput(in2)
-	c.AddPrimaryInput(in3)
-	c.AddPrimaryOutput(out)
+	c.AddPrimaryOutput(out1)
 
-	// Create gates
-	g1 := circuit.NewGate("g1", circuit.AND, []*circuit.Signal{in1, in2}, mid1, c)
-	g2 := circuit.NewGate("g2", circuit.OR, []*circuit.Signal{in3, mid1}, mid2, c)
-	g3 := circuit.NewGate("g3", circuit.NOT, []*circuit.Signal{mid2}, out, c)
+	// Create simple test path: AND -> NOT
+	g1 := circuit.NewGate("g1", circuit.AND, []*circuit.Signal{in1, in2}, n1, c)
+	g2 := circuit.NewGate("g2", circuit.NOT, []*circuit.Signal{n1}, out1, c)
 
-	// Add gates to circuit
 	c.AddGate(g1)
 	c.AddGate(g2)
-	c.AddGate(g3)
 
-	// Set up fanout connections
-	in1.AddFanout(mid1)
-	in2.AddFanout(mid1)
-	in3.AddFanout(mid2)
-	mid1.AddFanout(mid2)
-	mid2.AddFanout(out)
+	// Set up connections
+	n1.FanIn = g1
+	n1.AddFanout(out1)
+	out1.FanIn = g2
 
-	// Identify bound and head lines
-	c.IdentifyBoundAndHeadLines()
+	c.Signals = []*circuit.Signal{in1, in2, n1, out1}
 
 	return c
 }
@@ -137,59 +125,44 @@ func CreateSimpleCircuit() *circuit.Circuit {
 func CreateFanTestCircuit() *circuit.Circuit {
 	c := circuit.NewCircuit()
 
-	// Create primary inputs
+	// Create signals with unique sensitization path structure
 	in1 := circuit.NewSignal("in1")
 	in2 := circuit.NewSignal("in2")
 	in3 := circuit.NewSignal("in3")
-	in4 := circuit.NewSignal("in4")
-
-	// Create internal signals with fanout points
-	n1 := circuit.NewSignal("n1") // Will be a fanout point
-	n2 := circuit.NewSignal("n2")
-	n3 := circuit.NewSignal("n3") // Another fanout point
-	n4 := circuit.NewSignal("n4")
-	n5 := circuit.NewSignal("n5")
-
-	// Create primary outputs
+	n1 := circuit.NewSignal("n1")
+	n2 := circuit.NewSignal("n2") // Signal requiring unique sensitization
+	n3 := circuit.NewSignal("n3")
 	out1 := circuit.NewSignal("out1")
 	out2 := circuit.NewSignal("out2")
 
-	// Mark I/O
-	for _, s := range []*circuit.Signal{in1, in2, in3, in4} {
-		s.MarkAsPrimary()
-		c.AddPrimaryInput(s)
-	}
+	// Set primary I/O
+	in1.MarkAsPrimary()
+	in2.MarkAsPrimary()
+	in3.MarkAsPrimary()
+	out1.MarkAsPrimary()
+	out2.MarkAsPrimary()
 
-	for _, s := range []*circuit.Signal{out1, out2} {
-		s.MarkAsPrimary()
-		c.AddPrimaryOutput(s)
-	}
+	c.AddPrimaryInput(in1)
+	c.AddPrimaryInput(in2)
+	c.AddPrimaryInput(in3)
+	c.AddPrimaryOutput(out1)
+	c.AddPrimaryOutput(out2)
 
-	// Create gates that form mandatory paths
+	// Create gates forming unique sensitization paths
 	g1 := circuit.NewGate("g1", circuit.AND, []*circuit.Signal{in1, in2}, n1, c)
 	g2 := circuit.NewGate("g2", circuit.OR, []*circuit.Signal{n1, in3}, n2, c)
-	g3 := circuit.NewGate("g3", circuit.AND, []*circuit.Signal{n2, in4}, n3, c)
-	g4 := circuit.NewGate("g4", circuit.OR, []*circuit.Signal{n3, n1}, n4, c)
-	g5 := circuit.NewGate("g5", circuit.AND, []*circuit.Signal{n3, n4}, n5, c)
-	g6 := circuit.NewGate("g6", circuit.NOT, []*circuit.Signal{n5}, out1, c)
-	g7 := circuit.NewGate("g7", circuit.OR, []*circuit.Signal{n1, n3}, out2, c)
+	g3 := circuit.NewGate("g3", circuit.AND, []*circuit.Signal{n2}, n3, c)
+	g4 := circuit.NewGate("g4", circuit.OR, []*circuit.Signal{n3}, out1, c)
+	g5 := circuit.NewGate("g5", circuit.AND, []*circuit.Signal{n2}, out2, c)
 
-	// Add gates to circuit
-	for _, g := range []*circuit.Gate{g1, g2, g3, g4, g5, g6, g7} {
-		c.AddGate(g)
-	}
+	c.Gates = append(c.Gates, g1, g2, g3, g4, g5)
+	c.Signals = append(c.Signals, in1, in2, in3, n1, n2, n3, out1, out2)
 
-	// Set up fanout connections to create bound and free lines
-	n1.AddFanout(n2)
-	n1.AddFanout(n4)
-	n1.AddFanout(out2)
-
-	n3.AddFanout(n4)
-	n3.AddFanout(n5)
-	n3.AddFanout(out2)
+	// Create mandatory paths through n2
+	n2.AddFanout(n3)
+	n2.AddFanout(out2)
+	n3.AddFanout(out1)
 
 	c.IdentifyBoundAndHeadLines()
-	c.InitializeControllability()
-
 	return c
 }

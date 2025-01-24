@@ -71,34 +71,35 @@ func (c *Circuit) containsSignal(signal *Signal) bool {
 
 // IdentifyBoundAndHeadLines identifies bound and head lines in the circuit
 func (c *Circuit) IdentifyBoundAndHeadLines() {
-	// First, mark all signals as not bound
-	for _, signal := range c.Signals {
-		signal.IsBound = false
-		signal.IsHead = false
-	}
+	// Reset head lines
+	c.HeadLines = make([]*Signal, 0)
 
-	// Start from fanout points and mark all reachable signals as bound
+	// First identify bound lines through fanout points
+	boundLines := make(map[*Signal]bool)
 	for _, signal := range c.Signals {
-		if signal.HasFanout() {
-			c.markReachableSignalsAsBound(signal)
-		}
-	}
-
-	// Identify head lines (free lines adjacent to bound lines)
-	for _, gate := range c.Gates {
-		// Check if any input is bound
-		hasBoundInput := false
-		for _, input := range gate.Inputs {
-			if input.IsBound {
-				hasBoundInput = true
-				break
+		if len(signal.Fanouts) > 1 {
+			// Mark all signals reachable from this fanout as bound
+			for _, fanout := range signal.Fanouts {
+				boundLines[fanout] = true
 			}
 		}
+	}
 
-		// If output is not bound but has bound input, it's a head line
-		if !gate.Output.IsBound && hasBoundInput {
-			gate.Output.MarkAsHead()
-			c.HeadLines = append(c.HeadLines, gate.Output)
+	// Then identify head lines - free lines adjacent to bound lines
+	for _, signal := range c.Signals {
+		if !boundLines[signal] { // If signal is free
+			// Check if it's adjacent to any bound line
+			isHead := false
+			for _, fanout := range signal.Fanouts {
+				if boundLines[fanout] {
+					isHead = true
+					break
+				}
+			}
+			if isHead {
+				signal.IsHead = true
+				c.HeadLines = append(c.HeadLines, signal)
+			}
 		}
 	}
 }

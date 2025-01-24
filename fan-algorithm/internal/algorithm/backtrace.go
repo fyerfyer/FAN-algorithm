@@ -2,9 +2,12 @@
 package algorithm
 
 import (
-	"github.com/fyerfyer/FAN-algorithm/fan-algorithm/internal/circuit"
-	"github.com/fyerfyer/FAN-algorithm/fan-algorithm/pkg/types"
 	"sort"
+
+	"github.com/fyerfyer/FAN-algorithm/fan-algorithm/internal/circuit"
+	"github.com/fyerfyer/FAN-algorithm/fan-algorithm/internal/sensitization"
+	"github.com/fyerfyer/FAN-algorithm/fan-algorithm/internal/utils"
+	"github.com/fyerfyer/FAN-algorithm/fan-algorithm/pkg/types"
 )
 
 // BacktraceResult using enhanced types
@@ -16,25 +19,35 @@ type BacktraceResult struct {
 }
 
 // MultipleBacktrace improved with enhanced functionality
-func MultipleBacktrace(initialObjectives []*types.BacktraceObjective,
-	c *circuit.Circuit,
-	config *types.TestGenerationConfig) *BacktraceResult {
-
+func MultipleBacktrace(initialObjectives []*types.BacktraceObjective, c *circuit.Circuit, config *types.TestGenerationConfig) *BacktraceResult {
 	result := &BacktraceResult{
 		FinalObjectives: make([]*types.BacktraceObjective, 0),
 		HeadLines:       make([]*circuit.Signal, 0),
 		Stats:           types.NewTestGenerationStats(),
 	}
 
-	// Handle unique sensitization paths
-	if config.UseDynamicBacktrace && len(initialObjectives) == 1 && initialObjectives[0].Signal.IsFaulty() {
-		if paths := c.FindMandatoryPaths(initialObjectives[0].Signal); len(paths) > 0 {
+	// Always include initial objectives in final objectives
+	for _, obj := range initialObjectives {
+		result.FinalObjectives = append(result.FinalObjectives, obj)
+		if obj.Signal.IsHead {
+			result.HeadLines = append(result.HeadLines, obj.Signal)
+		}
+	}
+
+	// Process unique sensitization if enabled
+	if config.UseUniqueSensitization && len(initialObjectives) > 0 {
+		result.Stats.Decisions++
+		if paths := findMandatoryPaths(initialObjectives[0].Signal, c); len(paths) > 0 {
 			for _, signal := range paths {
-				obj := types.CreateObjective(signal, types.JUSTIFY, circuit.ONE)
-				obj.Priority = 10
+				obj := &types.BacktraceObjective{
+					Signal:    signal,
+					Value:     circuit.ONE,
+					Priority:  10,
+					OneCount:  1,
+					ZeroCount: 0,
+				}
 				result.FinalObjectives = append(result.FinalObjectives, obj)
 			}
-			return result
 		}
 	}
 
@@ -49,21 +62,27 @@ func MultipleBacktrace(initialObjectives []*types.BacktraceObjective,
 				continue
 			}
 			processed[obj.Signal.ID] = true
-			result.Stats.BacktraceCount++
 
-			if obj.Signal.IsHead {
-				result.FinalObjectives = append(result.FinalObjectives, obj)
-				result.HeadLines = append(result.HeadLines, obj.Signal)
-				continue
-			}
-
+			// Process through gates if available
 			if obj.Signal.FanIn != nil {
 				newObjs := backtraceGateWithCost(obj.Signal.FanIn, obj)
-				nextObjectives = append(nextObjectives, newObjs...)
+				for _, newObj := range newObjs {
+					// Add to final objectives if head line
+					if newObj.Signal.IsHead {
+						result.HeadLines = append(result.HeadLines, newObj.Signal)
+						result.FinalObjectives = append(result.FinalObjectives, newObj)
+					}
+					nextObjectives = append(nextObjectives, newObj)
+				}
 			}
 		}
 
 		currentObjectives = nextObjectives
+	}
+
+	// Ensure we have at least one objective
+	if len(result.FinalObjectives) == 0 {
+		result.FinalObjectives = append(result.FinalObjectives, initialObjectives...)
 	}
 
 	sortObjectivesByPriorityAndCost(result.FinalObjectives)
@@ -72,16 +91,68 @@ func MultipleBacktrace(initialObjectives []*types.BacktraceObjective,
 
 // backtraceGateWithCost handles gate backtrace with cost estimation
 func backtraceGateWithCost(gate *circuit.Gate, obj *types.BacktraceObjective) []*types.BacktraceObjective {
+	results := make([]*types.BacktraceObjective, 0)
+
 	switch gate.Type {
 	case circuit.AND:
-		return backtraceANDGateEnhanced(gate, obj)
+		if obj.Value == circuit.ONE {
+			// AND=1 requires all inputs=1
+			for _, input := range gate.Inputs {
+				newObj := &types.BacktraceObjective{
+					Signal:    input,
+					Value:     circuit.ONE,
+					OneCount:  obj.OneCount,
+					ZeroCount: 0,
+					Priority:  obj.Priority - 1,
+				}
+				results = append(results, newObj)
+			}
+		} else {
+			// AND=0 requires any input=0
+			easiest := gate.GetEasiestControllingInput()
+			results = append(results, &types.BacktraceObjective{
+				Signal:    easiest,
+				Value:     circuit.ZERO,
+				ZeroCount: obj.ZeroCount,
+				OneCount:  0,
+				Priority:  obj.Priority - 1,
+			})
+		}
 	case circuit.OR:
-		return backtraceORGateEnhanced(gate, obj)
+		if obj.Value == circuit.ZERO {
+			// OR=0 requires all inputs=0
+			for _, input := range gate.Inputs {
+				newObj := &types.BacktraceObjective{
+					Signal:    input,
+					Value:     circuit.ZERO,
+					ZeroCount: obj.ZeroCount,
+					OneCount:  0,
+					Priority:  obj.Priority - 1,
+				}
+				results = append(results, newObj)
+			}
+		} else {
+			// OR=1 requires any input=1
+			easiest := gate.GetEasiestControllingInput()
+			results = append(results, &types.BacktraceObjective{
+				Signal:    easiest,
+				Value:     circuit.ONE,
+				OneCount:  obj.OneCount,
+				ZeroCount: 0,
+				Priority:  obj.Priority - 1,
+			})
+		}
 	case circuit.NOT:
-		return backtraceNOTGateEnhanced(gate, obj)
-	default:
-		return nil
+		results = append(results, &types.BacktraceObjective{
+			Signal:    gate.Inputs[0],
+			Value:     utils.GetAlternativeValue(obj.Value),
+			OneCount:  obj.ZeroCount,
+			ZeroCount: obj.OneCount,
+			Priority:  obj.Priority,
+		})
 	}
+
+	return results
 }
 
 // backtraceANDGateEnhanced with priority and cost improvements
@@ -172,4 +243,68 @@ func oppositeValue(value circuit.SignalValue) circuit.SignalValue {
 		return circuit.ONE
 	}
 	return circuit.ZERO
+}
+
+func findMandatoryPaths(signal *circuit.Signal, c *circuit.Circuit) []*circuit.Signal {
+	if signal.FanIn == nil {
+		return nil
+	}
+
+	// Find all paths to outputs
+	paths := findAllPaths(signal, c)
+	if len(paths) == 0 {
+		return nil
+	}
+
+	// Find signals that appear in all paths
+	mandatory := findCommonSignals(paths)
+	return mandatory
+}
+
+func findAllPaths(signal *circuit.Signal, c *circuit.Circuit) [][]*circuit.Signal {
+	// Use PathFinder from sensitization package
+	pf := sensitization.NewPathFinder(c)
+	dFrontier := []*circuit.Gate{signal.FanIn}
+	paths := pf.FindUniqueSensitizationPaths(dFrontier)
+
+	// Convert Path objects to signal paths
+	signalPaths := make([][]*circuit.Signal, 0)
+	for _, path := range paths {
+		signalPath := make([]*circuit.Signal, 0)
+		for _, gate := range path.Gates {
+			signalPath = append(signalPath, gate.Output)
+		}
+		signalPaths = append(signalPaths, signalPath)
+	}
+
+	return signalPaths
+}
+
+func findCommonSignals(paths [][]*circuit.Signal) []*circuit.Signal {
+	if len(paths) == 0 {
+		return nil
+	}
+
+	// Count occurrences of each signal
+	signalCount := make(map[*circuit.Signal]int)
+	for _, path := range paths {
+		// Use map to avoid counting duplicates within same path
+		seen := make(map[*circuit.Signal]bool)
+		for _, signal := range path {
+			if !seen[signal] {
+				signalCount[signal]++
+				seen[signal] = true
+			}
+		}
+	}
+
+	// Find signals that appear in all paths
+	common := make([]*circuit.Signal, 0)
+	for signal, count := range signalCount {
+		if count == len(paths) {
+			common = append(common, signal)
+		}
+	}
+
+	return common
 }

@@ -29,6 +29,9 @@ type Signal struct {
 	FanIn            *Gate       // Gate that drives this signal (nil for primary inputs)
 	ControllingValue SignalValue // The controlling value for its fanin gate
 	Controllability  int         // Controllability metric
+	IsFault          bool
+	FaultType        SignalValue
+	Value            SignalValue
 }
 
 // NewSignal creates a new signal with default values
@@ -48,14 +51,26 @@ func NewSignal(id string) *Signal {
 }
 
 // SetValue sets the value of the signal and marks it as stable
-func (s *Signal) SetValue(value SignalValue) {
-	s.State.Value = value
-	s.State.IsStable = true
+func (s *Signal) SetValue(v SignalValue) bool {
+	if s.IsFault {
+		return true // Keep faulty value
+	}
+	if s.Value == v {
+		return true
+	}
+	s.Value = v
+	return true
 }
 
 // GetValue returns the current value of the signal
 func (s *Signal) GetValue() SignalValue {
-	return s.State.Value
+	if s.IsFault {
+		if s.FaultType == ZERO {
+			return D
+		}
+		return D_BAR
+	}
+	return s.Value
 }
 
 // IsUnknown checks if the signal value is unknown (X)
@@ -65,7 +80,8 @@ func (s *Signal) IsUnknown() bool {
 
 // IsFaulty checks if the signal carries a fault value (D or D')
 func (s *Signal) IsFaulty() bool {
-	return s.State.Value == D || s.State.Value == D_BAR
+	val := s.GetValue()
+	return val == D || val == D_BAR
 }
 
 // AddFanout adds a fanout connection to this signal
@@ -210,4 +226,15 @@ func (s *Signal) GetPathsToOutputs() [][]*Signal {
 
 	dfs(s, make([]*Signal, 0))
 	return paths
+}
+
+// SetFault sets the fault value of the signal
+func (s *Signal) SetFault(value SignalValue) {
+	s.IsFault = true
+	s.FaultType = value
+	if value == ZERO {
+		s.Value = D
+	} else {
+		s.Value = D_BAR
+	}
 }

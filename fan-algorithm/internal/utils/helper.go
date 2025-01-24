@@ -191,3 +191,12 @@ func IsPathSensitizable(path []*circuit.Gate) bool {
 	}
 	return true
 }
+
+// GetInputValues returns a slice of values for gate inputs
+func GetInputValues(g *circuit.Gate) []circuit.SignalValue {
+	values := make([]circuit.SignalValue, len(g.Inputs))
+	for i, input := range g.Inputs {
+		values[i] = input.GetValue()
+	}
+	return values
+}

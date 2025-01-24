@@ -36,26 +36,31 @@ func NewGate(id string, gateType GateType, inputs []*Signal, output *Signal, c *
 func (g *Gate) Evaluate() bool {
 	oldValue := g.Output.GetValue()
 
-	switch g.Type {
-	case AND:
-		g.Output.SetValue(g.evaluateAND())
-	case OR:
-		g.Output.SetValue(g.evaluateOR())
-	case NOT:
-		g.Output.SetValue(g.evaluateNOT())
-	}
+	g.Output.SetValue(g.evaluate())
 
 	return oldValue != g.Output.GetValue()
 }
 
-// evaluateAND implements AND gate logic including D-algorithm values
-func (g *Gate) evaluateAND() SignalValue {
+func (g *Gate) evaluate() SignalValue {
+	switch g.Type {
+	case AND:
+		return evaluateAND(g.Inputs)
+	case OR:
+		return evaluateOR(g.Inputs)
+	case NOT:
+		return evaluateNOT(g.Inputs[0])
+	default:
+		return X
+	}
+}
+
+func evaluateAND(inputs []*Signal) SignalValue {
 	hasX := false
 	hasD := false
 	// hasDBar := false
 
 	// Check for any 0 inputs first (dominant value for AND)
-	for _, input := range g.Inputs {
+	for _, input := range inputs {
 		if input.GetValue() == ZERO {
 			return ZERO
 		}
@@ -84,14 +89,13 @@ func (g *Gate) evaluateAND() SignalValue {
 	return ONE
 }
 
-// evaluateOR implements OR gate logic including D-algorithm values
-func (g *Gate) evaluateOR() SignalValue {
+func evaluateOR(inputs []*Signal) SignalValue {
 	hasX := false
 	// hasD := false
 	hasDBar := false
 
 	// Check for any 1 inputs first (dominant value for OR)
-	for _, input := range g.Inputs {
+	for _, input := range inputs {
 		if input.GetValue() == ONE {
 			return ONE
 		}
@@ -120,10 +124,9 @@ func (g *Gate) evaluateOR() SignalValue {
 	return ZERO
 }
 
-// evaluateNOT implements NOT gate logic including D-algorithm values
-func (g *Gate) evaluateNOT() SignalValue {
-	input := g.Inputs[0].GetValue()
-	switch input {
+func evaluateNOT(input *Signal) SignalValue {
+	value := input.GetValue()
+	switch value {
 	case ZERO:
 		return ONE
 	case ONE:
